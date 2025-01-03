@@ -1,0 +1,296 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: demo-sa
+  namespace: demo
+automountServiceAccountToken: false
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: demo
+  name: jaeger
+  labels:
+    service: jaeger
+spec:
+  ports:
+  - port: 16686
+    protocol: TCP
+    targetPort: 16686
+    name: ui
+    nodePort: 30001
+  - port: 4317
+    protocol: TCP
+    targetPort: 4317
+    name: proto
+  selector:
+    service: jaeger
+  type: NodePort
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: demo
+  name: tempo
+  labels:
+    service: tempo
+spec:
+  ports:
+  - port: 3200
+    protocol: TCP
+    targetPort: 3200
+    name: ui
+    nodePort: 30002
+  - port: 4317
+    protocol: TCP
+    targetPort: 4317
+    name: otlp-grpc
+  - port: 4318
+    protocol: TCP
+    targetPort: 4318
+    name: otlp-http
+  selector:
+    service: tempo
+  type: NodePort
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: demo
+  name: grafana
+  labels:
+    service: grafana
+spec:
+  ports:
+  - port: 3000
+    protocol: TCP
+    targetPort: 3000
+    name: ui
+    nodePort: 30003
+  selector:
+    service: grafana
+  type: NodePort
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: demo
+  name: spring-boot
+  labels:
+    service: spring-boot
+spec:
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+    nodePort: 30000
+  selector:
+    app: spring-boot
+  type: NodePort
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: demo
+  name: jaeger
+  labels:
+    service: jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      service: jaeger
+  template:
+    metadata:
+      labels:
+        service: jaeger
+    spec:
+      serviceAccountName: demo-sa
+      containers:
+        - name: jaeger
+          image: jaegertracing/all-in-one:1.64.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 16686
+              protocol: TCP
+            - containerPort: 4317
+              protocol: TCP
+            - containerPort: 4318
+              protocol: TCP
+            - containerPort: 9411
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+              ephemeral-storage: "512Mi"
+            limits:
+              memory: "512Mi"
+              ephemeral-storage: "2Gi"
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: demo
+  name: tempo
+  labels:
+    service: tempo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      service: tempo
+  template:
+    metadata:
+      labels:
+        service: tempo
+    spec:
+      serviceAccountName: demo-sa
+      containers:
+        - name: tempo
+          image: grafana/tempo:main-b6bd537
+          imagePullPolicy: IfNotPresent
+          command: ["/tempo"]
+          args: ["-config.file=/etc/tempo.yml"]
+          ports:
+            - containerPort: 3200
+              protocol: TCP
+            - containerPort: 4317
+              protocol: TCP
+            - containerPort: 4318
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+              ephemeral-storage: "512Mi"
+            limits:
+              memory: "512Mi"
+              ephemeral-storage: "2Gi"
+          volumeMounts:
+            - name: tempoconfig
+              mountPath: /etc/tempo.yml
+              readOnly: true
+      volumes:
+        - name: tempoconfig
+          hostPath:
+            path: /vagrant/vagrant/tempo.yml
+            type: File
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: demo
+  name: grafana
+  labels:
+    service: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      service: grafana
+  template:
+    metadata:
+      labels:
+        service: grafana
+    spec:
+      serviceAccountName: demo-sa
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.4.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+              ephemeral-storage: "512Mi"
+            limits:
+              memory: "512Mi"
+              ephemeral-storage: "2Gi"
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: demo
+  name: spring-boot
+  labels:
+    app: spring-boot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spring-boot
+  template:
+    metadata:
+      labels:
+        app: spring-boot
+    spec:
+      serviceAccountName: demo-sa
+      containers:
+        - name: spring-boot
+          image: localhost:31050/opentelemetry-spring-boot-example:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+              ephemeral-storage: "256Mi"
+            limits:
+              memory: "512Mi"
+              ephemeral-storage: "1Gi"
+        - name: otel-collector
+          image: otel/opentelemetry-collector:0.116.1
+          imagePullPolicy: IfNotPresent
+          command: ["/otelcol"]
+          args: ["--config", "/opt/otelcol/etc/config.yaml"]
+          ports:
+            - containerPort: 4317
+              protocol: TCP
+            - containerPort: 4318
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+              ephemeral-storage: "256Mi"
+            limits:
+              memory: "512Mi"
+              ephemeral-storage: "1Gi"
+          volumeMounts:
+            - name: otelconfig
+              mountPath: /opt/otelcol/etc/config.yaml
+              readOnly: true
+      volumes:
+        - name: otelconfig
+          hostPath:
+            path: /vagrant/vagrant/otel-collector.yml
+            type: File
